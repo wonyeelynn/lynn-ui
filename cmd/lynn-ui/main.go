@@ -32,7 +32,7 @@ import (
 	"github.com/wonyeelynn/lynn-ui/converter"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -57,31 +57,82 @@ func usage() {
 	fmt.Fprint(os.Stderr, `lynn-ui - lossless subscription converter (fixes 3x-ui / sublink conversion bugs)
 
 Usage:
-  lynn-ui convert <url-or-file|-> [--out file] [--hy2-sni-host=true] [--hy2-skip-verify=true]
+  lynn-ui convert <url-or-file|-> [--out file] [--rules embedded|<file>|<url>] [--hy2-sni-host=true] [--hy2-skip-verify=true]
       Convert a subscription (URL, local file, or stdin "-") to Clash YAML on stdout.
-  lynn-ui serve [--addr :8080] [--hy2-sni-host=true] [--hy2-skip-verify=true]
+  lynn-ui serve [--addr :8080] [--rules embedded|<file>|<url>] [--hy2-sni-host=true] [--hy2-skip-verify=true]
       HTTP server: GET /clash?url=<subscription-url>, POST /clash (body = links), GET /health
   lynn-ui version
+
+  --rules merges a rules document (proxy-groups, rule-providers, rules, dns)
+  into the output. "embedded" uses the copy baked into the binary; a file
+  path or http(s) URL overrides it. Without --rules the output is proxies
+  plus the minimal PROXY group only.
 `)
 }
 
-func optionsFromFlags(fs *flag.FlagSet) converter.Options {
+func optionsFromFlags(fs *flag.FlagSet) (converter.Options, *string) {
 	opts := converter.DefaultOptions()
 	fs.BoolVar(&opts.HY2SNIHost, "hy2-sni-host", true,
 		"when a hysteria2 link has no sni, use the server hostname as sni")
 	fs.BoolVar(&opts.HY2SkipVerify, "hy2-skip-verify", true,
 		"when a hysteria2 link has no insecure flag, emit skip-cert-verify: true")
-	return opts
+	rulesFlag := fs.String("rules", "",
+		`merge a rules document into the output: "embedded", a file path, or an http(s) URL`)
+	return opts, rulesFlag
+}
+
+// loadRules resolves the --rules flag after parsing: empty means no rules,
+// anything else is loaded and validated now so a bad rules file fails fast
+// instead of shipping bad subscriptions.
+func loadRules(rulesFlag string) *converter.Rules {
+	if rulesFlag == "" {
+		return nil
+	}
+	rules, err := converter.LoadRulesFromSource(rulesFlag)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Fprintf(os.Stderr, "lynn-ui: rules merged from %q: %d proxy-groups, %d rule-providers, %d rules\n",
+		rulesFlag, rules.GroupCount, rules.ProviderCount, rules.RuleCount)
+	return rules
+}
+
+// reorderArgs moves flag tokens before positional arguments so flags work
+// no matter where they appear on the command line. Go's flag package stops
+// parsing at the first positional argument, which would silently drop e.g.
+// "--rules embedded" in "convert <url> --rules embedded" -- the documented
+// order. "-" (stdin) stays a positional.
+func reorderArgs(args []string) []string {
+	valueFlags := map[string]bool{"rules": true, "out": true, "addr": true}
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-" || !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+			continue
+		}
+		flags = append(flags, a)
+		name := strings.TrimLeft(a, "-")
+		if eq := strings.Index(name, "="); eq >= 0 {
+			name = name[:eq]
+		}
+		if valueFlags[name] && !strings.Contains(a, "=") && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	return append(flags, positional...)
 }
 
 func cmdConvert(args []string) {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
-	opts := optionsFromFlags(fs)
+	opts, rulesFlag := optionsFromFlags(fs)
 	outPath := fs.String("out", "", "write Clash YAML to this file instead of stdout")
 	fs.Usage = func() { usage() }
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(args)); err != nil {
 		os.Exit(2)
 	}
+	opts.Rules = loadRules(*rulesFlag)
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "convert needs a subscription URL, file, or - (stdin)")
 		os.Exit(2)
@@ -99,7 +150,12 @@ func cmdConvert(args []string) {
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, "warning:", w)
 	}
-	out, err := converter.BuildClash(proxies)
+	var out []byte
+	if opts.Rules != nil {
+		out, err = converter.BuildClashWithRules(proxies, opts.Rules)
+	} else {
+		out, err = converter.BuildClash(proxies)
+	}
 	if err != nil {
 		fatal(err)
 	}
@@ -130,12 +186,13 @@ func readInput(src string) (string, error) {
 
 func cmdServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	opts := optionsFromFlags(fs)
+	opts, rulesFlag := optionsFromFlags(fs)
 	addr := fs.String("addr", ":8080", "listen address")
 	fs.Usage = func() { usage() }
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(args)); err != nil {
 		os.Exit(2)
 	}
+	opts.Rules = loadRules(*rulesFlag)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +233,12 @@ func cmdServe(args []string) {
 		for _, warn := range warnings {
 			fmt.Fprintln(os.Stderr, "warning:", warn)
 		}
-		out, err := converter.BuildClash(proxies)
+		var out []byte
+		if opts.Rules != nil {
+			out, err = converter.BuildClashWithRules(proxies, opts.Rules)
+		} else {
+			out, err = converter.BuildClash(proxies)
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -187,6 +249,12 @@ func cmdServe(args []string) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintf(w, "lynn-ui %s - lossless subscription converter\n\nGET  /clash?url=<subscription-url>  -> Clash YAML\nPOST /clash  (body = subscription links) -> Clash YAML\nGET  /health\n", version)
+		if opts.Rules != nil {
+			fmt.Fprintf(w, "rules: merged (%d proxy-groups, %d rule-providers, %d rules)\n",
+				opts.Rules.GroupCount, opts.Rules.ProviderCount, opts.Rules.RuleCount)
+		} else {
+			fmt.Fprint(w, "rules: off (nodes only)\n")
+		}
 	})
 
 	fmt.Fprintf(os.Stderr, "lynn-ui %s listening on %s\n", version, *addr)
