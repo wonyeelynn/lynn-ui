@@ -11,22 +11,22 @@ import (
 //
 //	vmess://eyJ2IjoiMiIsInBzIjoiTmFtZSIsImFkZCI6Imhvc3QiLCJwb3J0IjoiNDQzIiwiaWQiOiJ1dWlkIiwiYWlkIjowLCJzY3kiOiJhdXRvIiwibmV0Ijoid3MiLCJ0eXBlIjoibm9uZSIsImhvc3QiOiIiLCJwYXRoIjoiL3dzIiwidGxzIjoidGxzIiwic25pIjoiIiwgImZwIjoiY2hyb21lIiwiYWxwbiI6ImgyIn0=
 type vmessJSON struct {
-	Version    string `json:"v"`
-	Name       string `json:"ps"`
-	Server     string `json:"add"`
-	Port       interface{} `json:"port"`
-	UUID       string `json:"id"`
-	AlterID    int    `json:"aid"`
-	Cipher     string `json:"scy"`
-	Network    string `json:"net"`
-	Type       string `json:"type"`
-	Host       string `json:"host"`
-	Path       string `json:"path"`
-	TLS        string `json:"tls"`
-	ServerName string `json:"sni"`
-	Fingerprint string `json:"fp"`
-	ALPN       string `json:"alpn"`
-	Flow       string `json:"flow"`
+	Version     string      `json:"v"`
+	Name        string      `json:"ps"`
+	Server      string      `json:"add"`
+	Port        interface{} `json:"port"`
+	UUID        string      `json:"id"`
+	AlterID     int         `json:"aid"`
+	Cipher      string      `json:"scy"`
+	Network     string      `json:"net"`
+	Type        string      `json:"type"`
+	Host        string      `json:"host"`
+	Path        string      `json:"path"`
+	TLS         string      `json:"tls"`
+	ServerName  string      `json:"sni"`
+	Fingerprint string      `json:"fp"`
+	ALPN        string      `json:"alpn"`
+	Flow        string      `json:"flow"`
 }
 
 func parseVMess(link string) (*Proxy, error) {
