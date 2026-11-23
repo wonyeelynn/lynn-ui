@@ -57,6 +57,23 @@ lynn-ui convert <订阅> --hy2-sni-host=false --hy2-skip-verify=false
 
 输出是一份可直接用的 Clash 配置：`proxies`（全部节点，字段齐全）加一个最小的 `PROXY` select 组。
 
+### 规则合并（v0.2.0）
+
+默认输出只有节点（proxies + 最小 PROXY 组），Shadowrocket 这类只取节点的客户端够用；拿订阅当完整配置的 Mihomo / Clash 客户端会丢规则和 dns。加 `--rules` 就把规则文件合并进去：
+
+```bash
+# 用二进制里嵌的规则（和面板 subClashRules 指向的同一份文件）
+lynn-ui convert <订阅> --rules embedded
+lynn-ui serve --addr :8080 --rules embedded
+
+# 或指定文件 / URL 覆盖嵌的版本
+lynn-ui convert <订阅> --rules ./my-rules.yaml
+```
+
+合并后的输出：proxies + 20 个 proxy-groups（PROXY 在首位，后接规则文件的 19 个组）+ 45 个 rule-providers + 48 条 rules + dns。规则文件在启动时解析校验（组名不能叫 PROXY、规则目标组必须存在、RULE-SET 引用的提供方必须存在），校验不过直接报错退出，不会发出坏订阅。
+
+嵌的规则来源：`converter/rules.yaml`，是 `clash-rules-comprehensive.yaml`（面板 subClashRules 指向的 GitHub 文件）的逐字副本，构建时嵌进二进制。改规则 = 更新这个副本、重新构建、重新部署。不加 `--rules` 时输出保持纯节点，可随时回退。
+
 ### HTTP 服务
 
 ```bash
@@ -69,9 +86,9 @@ lynn-ui serve --addr :8080
 
 ## 验证状态
 
-- 单元测试（`go test ./...`）：14 个，全部通过，只用假数据（假 UUID、假密码、假公钥）。
-- 集成验证：用真实面板原始订阅（9 个节点：3 个 VLESS+REALITY、3 个 VLESS+XHTTP、3 个 HY2）实测，9/9 节点字段齐全，无警告。
-- Mihomo 实测：输出拼成完整配置后，Mihomo v1.19.34 `mihomo -t` 校验通过（真实数据和假数据各一次）。
+- 单元测试（`go test ./...`）：25 个，全部通过，只用假数据（假 UUID、假密码、假公钥）。其中规则合并 10 个：基本合并、无规则输出不变、ConvertLinks 走规则路径、PROXY 重名拒绝、缺目标组拒绝、缺提供方拒绝、proxies 段拒绝、no-resolve 标志处理、嵌的真实规则文件（19 组 / 45 提供方 / 48 规则）与 9 节点合并；另有 1 个 CLI 参数重排测试（`--rules` 放订阅地址后面也生效）。
+- 集成验证：用真实面板原始订阅（9 个节点：3 个 VLESS+REALITY、3 个 VLESS+XHTTP、3 个 HY2）实测，9/9 节点字段齐全，无警告；`--rules embedded` 输出含 20 个 proxy-groups、45 个 rule-providers、48 条 rules、dns。
+- Mihomo 实测：输出拼成完整配置后，Mihomo v1.19.34 `mihomo -t` 校验通过（真实数据和假数据各一次；v0.2.0 含规则的完整输出也通过）。
 
 ## 注意
 
