@@ -9,7 +9,9 @@ import (
 
 // ConvertLinks parses subscription text (base64 or plain links) and returns
 // complete Clash (Mihomo) YAML. Every field present in the links is emitted;
-// nothing is dropped.
+// nothing is dropped. When opts.Rules is set, the rules document is merged
+// in (proxy-groups, rule-providers, rules, dns); otherwise the output is
+// proxies plus the minimal PROXY group only.
 func ConvertLinks(input string, opts Options) ([]byte, error) {
 	proxies, warnings, err := ParseSubscriptionText(input, opts)
 	if err != nil {
@@ -18,6 +20,9 @@ func ConvertLinks(input string, opts Options) ([]byte, error) {
 	for _, w := range warnings {
 		// Warnings are reported on stderr by the caller; conversion continues.
 		_ = w
+	}
+	if opts.Rules != nil {
+		return BuildClashWithRules(proxies, opts.Rules)
 	}
 	return BuildClash(proxies)
 }
@@ -35,6 +40,58 @@ func ConvertSubscription(rawURL string, opts Options) ([]byte, error) {
 // list plus a minimal "PROXY" select group so the document is directly
 // usable as a subscription.
 func BuildClash(proxies []*Proxy) ([]byte, error) {
+	list, err := buildProxyList(proxies)
+	if err != nil {
+		return nil, err
+	}
+	doc := map[string]any{
+		"proxies": list,
+		"proxy-groups": []map[string]any{
+			proxyGroup(),
+		},
+	}
+	return encodeClash(doc)
+}
+
+// BuildClashWithRules renders proxies plus a rules document: the minimal
+// PROXY group first, then the rules file's proxy-groups, rule-providers,
+// rules and dns. The rules document is validated by ParseRules before it
+// gets here, so a group named PROXY or a dangling rule target cannot
+// reach the output.
+func BuildClashWithRules(proxies []*Proxy, rules *Rules) ([]byte, error) {
+	list, err := buildProxyList(proxies)
+	if err != nil {
+		return nil, err
+	}
+	groups := []map[string]any{proxyGroup()}
+	groups = append(groups, rules.ProxyGroups...)
+	doc := map[string]any{
+		"proxies":      list,
+		"proxy-groups": groups,
+		"rules":        rules.Rules,
+	}
+	if len(rules.RuleProviders) > 0 {
+		doc["rule-providers"] = rules.RuleProviders
+	}
+	if rules.DNS != nil {
+		doc["dns"] = rules.DNS
+	}
+	return encodeClash(doc)
+}
+
+// proxyGroup is lynn-ui's minimal PROXY select group. Every rule group in
+// the merged document references PROXY, so it must always be present and
+// first.
+func proxyGroup() map[string]any {
+	return map[string]any{
+		"name":                "PROXY",
+		"type":                "select",
+		"proxies":             []string{"DIRECT"},
+		"include-all-proxies": true,
+	}
+}
+
+func buildProxyList(proxies []*Proxy) ([]map[string]any, error) {
 	list := make([]map[string]any, 0, len(proxies))
 	for _, p := range proxies {
 		m, err := proxyToClash(p)
@@ -43,17 +100,10 @@ func BuildClash(proxies []*Proxy) ([]byte, error) {
 		}
 		list = append(list, m)
 	}
-	doc := map[string]any{
-		"proxies": list,
-		"proxy-groups": []map[string]any{
-			{
-				"name":                "PROXY",
-				"type":                "select",
-				"proxies":             []string{"DIRECT"},
-				"include-all-proxies": true,
-			},
-		},
-	}
+	return list, nil
+}
+
+func encodeClash(doc map[string]any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
