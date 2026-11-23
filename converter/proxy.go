@@ -32,6 +32,10 @@ type Options struct {
 	// skip-cert-verify: true. Default true. This matches the output that is
 	// known to connect; set to false to let the client verify strictly.
 	HY2SkipVerify bool
+	// Rules: when set, the parsed rules document is merged into the Clash
+	// output (proxy-groups, rule-providers, rules, dns). Nil means the
+	// pure node output: proxies plus the minimal PROXY group only.
+	Rules *Rules
 }
 
 // DefaultOptions returns the recommended defaults.
@@ -41,10 +45,10 @@ func DefaultOptions() Options {
 
 // RealityOpts holds the VLESS+REALITY parameters.
 type RealityOpts struct {
-	PublicKey               string
-	ShortID                 string
-	SupportX25519MLKEM768   *bool // nil = not present in the link; omit from output
-	SpiderX                 string // spx: parsed and kept, but Mihomo has no such Clash field, so it is not emitted
+	PublicKey             string
+	ShortID               string
+	SupportX25519MLKEM768 *bool  // nil = not present in the link; omit from output
+	SpiderX               string // spx: parsed and kept, but Mihomo has no such Clash field, so it is not emitted
 }
 
 // Proxy is the unified model for one node, regardless of protocol.
@@ -63,7 +67,7 @@ type Proxy struct {
 	TLS            bool
 	ServerName     string // sni
 	Fingerprint    string // fp
-	SkipCertVerify *bool // nil = not present in the link; omit from output
+	SkipCertVerify *bool  // nil = not present in the link; omit from output
 	ALPN           []string
 
 	// REALITY (vless)
